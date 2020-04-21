@@ -9,6 +9,7 @@ using StardewValley.Objects;
 using StardewValley.TerrainFeatures;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using SObject = StardewValley.Object;
 
 namespace DeluxeGrabber
@@ -61,70 +62,73 @@ namespace DeluxeGrabber
         /// <param name="sender">The event sender.</param>
         /// <param name="e">The event data.</param>
         private void OnObjectListChanged(object sender, ObjectListChangedEventArgs e) {
+            
             if (!Config.DoHarvestTruffles) {
                 return;
             }
+			if (!e.Location.Name.Equals("Farm", StringComparison.InvariantCultureIgnoreCase)) return;
 
-            GameLocation foragerMap;
-            foragerMap = Game1.getLocationFromName(Config.GlobalForageMap);
-            if (foragerMap == null) {
-                return;
-            }
+			var truffles = e.Added.Where(x => x.Value.Name.Equals("Truffle", StringComparison.InvariantCultureIgnoreCase)).ToList();
+        
+			if (truffles.Count == 0) return;
 
-            foragerMap.Objects.TryGetValue(new Vector2(Config.GlobalForageTileX, Config.GlobalForageTileY), out SObject grabber);
+			StardewValley.Object grabber = null;
 
-            if (grabber == null || !grabber.Name.Contains("Grabber")) {
-                return;
-            }
+			// Try to find global grabber
+			var globalForageMap = Game1.getLocationFromName(Config.GlobalForageMap);
+			if (globalForageMap != null) {
+				globalForageMap.Objects.TryGetValue(new Vector2(Config.GlobalForageTileX, Config.GlobalForageTileY), out grabber);
+			}
+			// No global grabber
+			if (grabber == null || !grabber.Name.Contains("Grabber")) {
+				grabber = e.Location.Objects.Values.Where(x => x.Name.Contains("Grabber")).FirstOrDefault();
+				if (grabber == null) return;
+			}
 
-            
-            System.Random random = new System.Random();
-            foreach (KeyValuePair<Vector2, SObject> pair in e.Added) {
+			//grabber.showNextIndex.Value = true;
 
-                if (pair.Value.ParentSheetIndex != 430 || pair.Value.bigCraftable.Value) {
-                    continue;
-                }
-
+			// Pick up truffles
+			foreach (var truffle in truffles) {
+                
                 if ((grabber.heldObject.Value as Chest).items.CountIgnoreNull() >= Chest.capacity) {
-                    return;
-                }
-
-                SObject obj = pair.Value;
-                if (obj.Stack == 0) {
-                    obj.Stack = 1;
-                }
-
-                if (!obj.isForage(null) && !IsGrabbableWorld(obj)) {
-                    continue;
-                }
+				    break;
+				}
+                
 
                 if (Game1.player.professions.Contains(Farmer.botanist)) {
-                    obj.Quality = SObject.bestQuality;
-                } else if (random.NextDouble() < Game1.player.ForagingLevel / 30.0) {
-                    obj.Quality = SObject.highQuality;
-                } else if (random.NextDouble() < Game1.player.ForagingLevel / 15.0) {
-                    obj.Quality = SObject.medQuality;
-                }
+					truffle.Value.Quality = SObject.bestQuality;
+				}
+				else if (Game1.random.NextDouble() < (double)Game1.player.ForagingLevel / 30.0) {
+					truffle.Value.Quality = SObject.highQuality;
+				}
+				else if (Game1.random.NextDouble() < (double)Game1.player.ForagingLevel / 15.0) {
+					truffle.Value.Quality = SObject.medQuality;
+				}
 
+				if (truffle.Value.Stack == 0) {
+					truffle.Value.Stack = 1;
+				}
                 if (Game1.player.professions.Contains(Farmer.gatherer)) {
-                    while (random.NextDouble() < 0.2) {
-                        obj.Stack += 1;
-                    }
-                }
-
-                Monitor.Log($"Grabbing truffle: {obj.Stack}x{quality[obj.Quality]}", LogLevel.Trace);
-                (grabber.heldObject.Value as Chest).addItem(obj);
-                e.Location.Objects.Remove(pair.Key);
-
-                if (Config.DoGainExperience) {
-                    gainExperience(FORAGING, 7);
-                }
+                    
+					while (Game1.random.NextDouble() < 0.2) {
+						truffle.Value.Stack += 1;
+					}
+				}
+            
+                Monitor.Log($"Grabbing truffle: {truffle.Value.Stack}x{quality[truffle.Value.Quality]}", LogLevel.Trace);
+                    
+				(grabber.heldObject.Value as Chest).addItem(truffle.Value);
+				e.Location.Objects.Remove(truffle.Key);
+            
+				if (this.Config.DoGainExperience) {
+					this.gainExperience(this.FORAGING, 7);
+				}
             }
 
             if ((grabber.heldObject.Value as Chest).items.CountIgnoreNull() > 0) {
                 grabber.showNextIndex.Value = true;
             }
-        }
+		}
 
         /// <summary>Raised after the game begins a new day (including when the player loads a save).</summary>
         /// <param name="sender">The event sender.</param>
