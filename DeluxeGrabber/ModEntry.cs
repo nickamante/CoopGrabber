@@ -9,7 +9,7 @@ using StardewValley.Objects;
 using StardewValley.TerrainFeatures;
 using System;
 using System.Collections.Generic;
-using Object = StardewValley.Object;
+using SObject = StardewValley.Object;
 
 namespace DeluxeGrabber
 {
@@ -20,6 +20,8 @@ namespace DeluxeGrabber
         private readonly int FARMING = 0;
         private readonly int FORAGING = 2;
 
+        /// <summary>The mod entry point, called after the mod is first loaded.</summary>
+        /// <param name="helper">Provides simplified APIs for writing mods.</param>
         public override void Entry(IModHelper helper) {
 
             Config = Helper.ReadConfig<ModConfig>();
@@ -27,8 +29,14 @@ namespace DeluxeGrabber
             Helper.ConsoleCommands.Add("printLocation", "Print current map and tile location", PrintLocation);
             Helper.ConsoleCommands.Add("setForagerLocation", "Set current location as global grabber location", SetForagerLocation);
 
-            TimeEvents.AfterDayStarted += TimeEvents_AfterDayStarted;
-            LocationEvents.ObjectsChanged += LocationEvents_ObjectsChanged;
+            helper.Events.GameLoop.DayStarted += OnDayStarted;
+            helper.Events.World.ObjectListChanged += OnObjectListChanged;
+        }
+
+        /// <summary>Get an API that other mods can access. This is always called after <see cref="M:StardewModdingAPI.Mod.Entry(StardewModdingAPI.IModHelper)" />.</summary>
+        public override object GetApi()
+        {
+            return new ModAPI(this.Config);
         }
 
         private void SetForagerLocation(string arg1, string[] arg2) {
@@ -49,7 +57,10 @@ namespace DeluxeGrabber
             Monitor.Log($"Tile: {Game1.player.getTileLocation()}");
         }
 
-        private void LocationEvents_ObjectsChanged(object sender, EventArgsLocationObjectsChanged e) {
+        /// <summary>Raised after objects are added or removed in a location.</summary>
+        /// <param name="sender">The event sender.</param>
+        /// <param name="e">The event data.</param>
+        private void OnObjectListChanged(object sender, ObjectListChangedEventArgs e) {
             if (!Config.DoHarvestTruffles) {
                 return;
             }
@@ -60,7 +71,7 @@ namespace DeluxeGrabber
                 return;
             }
 
-            foragerMap.Objects.TryGetValue(new Vector2(Config.GlobalForageTileX, Config.GlobalForageTileY), out Object grabber);
+            foragerMap.Objects.TryGetValue(new Vector2(Config.GlobalForageTileX, Config.GlobalForageTileY), out SObject grabber);
 
             if (grabber == null || !grabber.Name.Contains("Grabber")) {
                 return;
@@ -68,17 +79,17 @@ namespace DeluxeGrabber
 
             
             System.Random random = new System.Random();
-            foreach (KeyValuePair<Vector2, Object> pair in e.Added) {
+            foreach (KeyValuePair<Vector2, SObject> pair in e.Added) {
 
                 if (pair.Value.ParentSheetIndex != 430 || pair.Value.bigCraftable.Value) {
                     continue;
                 }
 
-                if ((grabber.heldObject.Value as Chest).items.Count >= 36) {
+                if ((grabber.heldObject.Value as Chest).items.CountIgnoreNull() >= Chest.capacity) {
                     return;
                 }
 
-                Object obj = pair.Value;
+                SObject obj = pair.Value;
                 if (obj.Stack == 0) {
                     obj.Stack = 1;
                 }
@@ -87,15 +98,15 @@ namespace DeluxeGrabber
                     continue;
                 }
 
-                if (Game1.player.professions.Contains(16)) {
-                    obj.Quality = 4;
+                if (Game1.player.professions.Contains(Farmer.botanist)) {
+                    obj.Quality = SObject.bestQuality;
                 } else if (random.NextDouble() < Game1.player.ForagingLevel / 30.0) {
-                    obj.Quality = 2;
+                    obj.Quality = SObject.highQuality;
                 } else if (random.NextDouble() < Game1.player.ForagingLevel / 15.0) {
-                    obj.Quality = 1;
+                    obj.Quality = SObject.medQuality;
                 }
 
-                if (Game1.player.professions.Contains(13)) {
+                if (Game1.player.professions.Contains(Farmer.gatherer)) {
                     while (random.NextDouble() < 0.2) {
                         obj.Stack += 1;
                     }
@@ -110,12 +121,15 @@ namespace DeluxeGrabber
                 }
             }
 
-            if ((grabber.heldObject.Value as Chest).items.Count > 0) {
+            if ((grabber.heldObject.Value as Chest).items.CountIgnoreNull() > 0) {
                 grabber.showNextIndex.Value = true;
             }
         }
 
-        private void TimeEvents_AfterDayStarted(object sender, System.EventArgs e) {
+        /// <summary>Raised after the game begins a new day (including when the player loads a save).</summary>
+        /// <param name="sender">The event sender.</param>
+        /// <param name="e">The event data.</param>
+        private void OnDayStarted(object sender, DayStartedEventArgs e) {
 
             AutograbBuildings();
             AutograbCrops();
@@ -123,7 +137,7 @@ namespace DeluxeGrabber
         }
 
         private void AutograbBuildings() {
-            Object grabber = null; // stores a reference to the autograbber
+            SObject grabber = null; // stores a reference to the autograbber
             List<Vector2> grabbables = new List<Vector2>(); // stores a list of all items which can be grabbed
             Dictionary<string, int> itemsAdded = new Dictionary<string, int>();
             GameLocation location;
@@ -142,7 +156,7 @@ namespace DeluxeGrabber
                     if (location != null) {
 
                         // populate list of objects which are grabbable, and find an autograbber
-                        foreach (KeyValuePair<Vector2, Object> pair in location.Objects.Pairs) {
+                        foreach (KeyValuePair<Vector2, SObject> pair in location.Objects.Pairs) {
                             if (pair.Value.Name.Contains("Grabber")) {
                                 Monitor.Log($"  Grabber found  at {pair.Key}", LogLevel.Trace);
                                 grabber = pair.Value;
@@ -162,7 +176,7 @@ namespace DeluxeGrabber
                         bool full = false;
                         foreach (Vector2 tile in grabbables) {
 
-                            if ((grabber.heldObject.Value as Chest).items.Count >= 36) {
+                            if ((grabber.heldObject.Value as Chest).items.CountIgnoreNull() >= Chest.capacity) {
                                 Monitor.Log($"  Grabber is full", LogLevel.Trace);
                                 full = true;
                                 break;
@@ -170,13 +184,13 @@ namespace DeluxeGrabber
 
                             if (location.objects[tile].Name.Contains("Slime Ball")) {
                                 System.Random random = new System.Random((int)Game1.stats.daysPlayed + (int)Game1.uniqueIDForThisGame + (int)tile.X * 77 + (int)tile.Y * 777 + 2);
-                                (grabber.heldObject.Value as Chest).addItem(new Object(766, random.Next(10, 21), false, -1, 0));
+                                (grabber.heldObject.Value as Chest).addItem(new SObject(766, random.Next(10, 21), false, -1, 0));
                                 int i = 0;
                                 while (random.NextDouble() < 0.33) {
                                     i++;
                                 }
                                 if (i > 0) {
-                                    (grabber.heldObject.Value as Chest).addItem(new Object(557, i, false, -1, 0));
+                                    (grabber.heldObject.Value as Chest).addItem(new SObject(557, i, false, -1, 0));
                                 }
                             } else if ((grabber.heldObject.Value as Chest).addItem(location.Objects[tile]) != null) {
                                 continue;
@@ -206,7 +220,7 @@ namespace DeluxeGrabber
                 }
 
                 // update sprite if grabber has items in it
-                if (grabber != null && (grabber.heldObject.Value as Chest).items.Count > 0) {
+                if (grabber != null && (grabber.heldObject.Value as Chest).items.CountIgnoreNull() > 0) {
                     grabber.showNextIndex.Value = true;
                 }
             }
@@ -220,13 +234,13 @@ namespace DeluxeGrabber
 
             int range = Config.GrabberRange;
             foreach (GameLocation location in Game1.locations) {
-                foreach (KeyValuePair<Vector2, Object> pair in location.Objects.Pairs) {
+                foreach (KeyValuePair<Vector2, SObject> pair in location.Objects.Pairs) {
                     if (pair.Value.Name.Contains("Grabber")) {
-                        Object grabber = pair.Value;
-                        if ((grabber.heldObject.Value == null) || (grabber.heldObject.Value as Chest).items.Count >= 36) {
+                        SObject grabber = pair.Value;
+                        if ((grabber.heldObject.Value == null) || (grabber.heldObject.Value as Chest).items.CountIgnoreNull() >= Chest.capacity) {
                             continue;
                         }
-                        bool full = (grabber.heldObject.Value as Chest).items.Count >= 36;
+                        bool full = (grabber.heldObject.Value as Chest).items.CountIgnoreNull() >= Chest.capacity;
                         for (int x = (int)pair.Key.X - range; x < pair.Key.X + range + 1 && !full; x ++) {
                             for (int y = (int)pair.Key.Y - range; y < pair.Key.Y + range + 1 && !full; y++) {
                                 Vector2 tile = new Vector2(x, y);
@@ -240,7 +254,7 @@ namespace DeluxeGrabber
                                 }
                                 else if (location.terrainFeatures.ContainsKey(tile) && location.terrainFeatures[tile] is FruitTree fruitTree)
                                 {
-                                    Object fruit = GetFruit(fruitTree, tile, location);
+                                    SObject fruit = GetFruit(fruitTree, tile, location);
                                     if (fruit != null)
                                     {
                                         (grabber.heldObject.Value as Chest).addItem(fruit);
@@ -250,10 +264,10 @@ namespace DeluxeGrabber
                                         }
                                     }
                                 }
-                                full = (grabber.heldObject.Value as Chest).items.Count >= 36;
+                                full = (grabber.heldObject.Value as Chest).items.CountIgnoreNull() >= Chest.capacity;
                             }
                         }
-                        if (grabber != null && (grabber.heldObject.Value as Chest).items.Count > 0) {
+                        if (grabber != null && (grabber.heldObject.Value as Chest).items.CountIgnoreNull() > 0) {
                             grabber.showNextIndex.Value = true;
                         }
                     }
@@ -264,7 +278,7 @@ namespace DeluxeGrabber
         private void HarvestIntoGrabber(HoeDirt dirt, Vector2 tile, GameLocation location, Chest grabberContents)
         {
             Crop crop = dirt.crop;
-            Object harvest;
+            SObject harvest;
 
             if (crop is null || crop.dead || crop.forageCrop) {
                 return;
@@ -312,7 +326,8 @@ namespace DeluxeGrabber
                         crop.minHarvest.Value,
                         System.Math.Min(
                             crop.minHarvest.Value + 1,
-                            crop.maxHarvest.Value + 1 + Game1.player.FarmingLevel / crop.maxHarvestIncreasePerFarmingLevel.Value));
+                            crop.maxHarvest.Value + 1 + Game1.player.FarmingLevel / (crop.maxHarvestIncreasePerFarmingLevel.Value > 0 ? crop.maxHarvestIncreasePerFarmingLevel.Value : 1)
+                        ));
                 }
                 if (crop.chanceForExtraCrops.Value > 0.0) {
                     while (random.NextDouble() < System.Math.Min(0.9, crop.chanceForExtraCrops.Value))
@@ -321,7 +336,7 @@ namespace DeluxeGrabber
                 if (crop.harvestMethod.Value == 1) {
                     // harvest with scythe
                     for (int i = 0; i < harvest_amount; i++) {
-                        harvest = new Object(parentSheetIndex: crop.indexOfHarvest, initialStack: 1, quality: quality);
+                        harvest = new SObject(parentSheetIndex: crop.indexOfHarvest, initialStack: 1, quality: quality);
                         grabberContents.addItem(harvest);
                     }
                     if (Config.DoGainExperience)
@@ -339,7 +354,7 @@ namespace DeluxeGrabber
                     if (!crop.programColored.Value)
                     {
                         // not a flower
-                        harvest = new Object(crop.indexOfHarvest.Value, 1, false, -1, quality);
+                        harvest = new SObject(crop.indexOfHarvest.Value, 1, false, -1, quality);
                         grabberContents.addItem(harvest);
                     }
                     else
@@ -349,7 +364,7 @@ namespace DeluxeGrabber
                         harvest.Quality = quality;
                         grabberContents.addItem(harvest);
                     }
-                    if (random.NextDouble() < (double)Game1.player.LuckLevel / 1500.0 + Game1.dailyLuck / 1200.0 + 9.99999974737875E-05)
+                    if (random.NextDouble() < (double)Game1.player.LuckLevel / 1500.0 + Game1.player.DailyLuck / 1200.0 + 9.99999974737875E-05)
                     {
                         harvest_amount *= 2;
                     }
@@ -360,7 +375,7 @@ namespace DeluxeGrabber
                     }
                     for (int index = 0; index < harvest_amount - 1; ++index)
                     {
-                        harvest = new Object(parentSheetIndex: crop.indexOfHarvest, initialStack: 1, quality: 0);
+                        harvest = new SObject(parentSheetIndex: crop.indexOfHarvest, initialStack: 1, quality: 0);
                         grabberContents.addItem(harvest);
                         // this may fail, we already used one slot for normal/silver/gold quality crop and now
                         // we are adding normal. We still do need to clear the crop, and parent won't call us again
@@ -380,10 +395,10 @@ namespace DeluxeGrabber
             }
         }
 
-        private Object GetFruit(FruitTree fruitTree, Vector2 tile, GameLocation location)
+        private SObject GetFruit(FruitTree fruitTree, Vector2 tile, GameLocation location)
         {
 
-            Object fruit = null;
+            SObject fruit = null;
             int quality = 0;
 
             if (fruitTree is null)
@@ -405,7 +420,7 @@ namespace DeluxeGrabber
                     if (fruitTree.daysUntilMature.Value <= -336) { quality = 4; }
                     if (fruitTree.struckByLightningCountdown.Value > 0) { quality = 0; }
 
-                    fruit = new Object(fruitTree.indexOfFruit.Value, fruitTree.fruitsOnTree.Value, false, -1, quality);
+                    fruit = new SObject(fruitTree.indexOfFruit.Value, fruitTree.fruitsOnTree.Value, false, -1, quality);
                     fruitTree.fruitsOnTree.Value = 0;
                     return fruit;
                 }
@@ -431,7 +446,7 @@ namespace DeluxeGrabber
                 return;
             }
 
-            foragerMap.Objects.TryGetValue(new Vector2(Config.GlobalForageTileX, Config.GlobalForageTileY), out Object grabber);
+            foragerMap.Objects.TryGetValue(new Vector2(Config.GlobalForageTileX, Config.GlobalForageTileY), out SObject grabber);
 
             if (grabber == null || !grabber.Name.Contains("Grabber")) {
                 Monitor.Log($"No auto-grabber at {Config.GlobalForageMap}: <{Config.GlobalForageTileX}, {Config.GlobalForageTileY}>", LogLevel.Trace);
@@ -441,7 +456,7 @@ namespace DeluxeGrabber
             foreach (GameLocation location in Game1.locations) {
                 grabbables.Clear();
                 itemsAdded.Clear();
-                foreach (KeyValuePair<Vector2, Object> pair in location.Objects.Pairs) {
+                foreach (KeyValuePair<Vector2, SObject> pair in location.Objects.Pairs) {
                     if (pair.Value.bigCraftable.Value) {
                         continue;
                     }
@@ -454,7 +469,7 @@ namespace DeluxeGrabber
                 if (location.Name.Equals("Forest")) {
                     foreach (TerrainFeature feature in location.terrainFeatures.Values) {
 
-                        if ((grabber.heldObject.Value as Chest).items.Count >= 36) {
+                        if ((grabber.heldObject.Value as Chest).items.CountIgnoreNull() >= Chest.capacity) {
                             Monitor.Log("Global grabber full", LogLevel.Info);
                             return;
                         }
@@ -462,9 +477,9 @@ namespace DeluxeGrabber
                         if (feature is HoeDirt dirt) {
                             if (dirt.crop != null) {
                                 if (dirt.crop.forageCrop.Value && dirt.crop.whichForageCrop.Value == 1) { // spring onion
-                                    Object onion = new Object(399, 1, false, -1, 0);
+                                    SObject onion = new SObject(399, 1, false, -1, 0);
 
-                                    if (Game1.player.professions.Contains(16)) {
+                                    if (Game1.player.professions.Contains(Farmer.botanist)) {
                                         onion.Quality = 4;
                                     } else if (random.NextDouble() < Game1.player.ForagingLevel / 30.0) {
                                         onion.Quality = 2;
@@ -472,7 +487,7 @@ namespace DeluxeGrabber
                                         onion.Quality = 1;
                                     }
 
-                                    if (Game1.player.professions.Contains(13)) {
+                                    if (Game1.player.professions.Contains(Farmer.gatherer)) {
                                         while (random.NextDouble() < 0.2) {
                                             onion.Stack += 1;
                                         }
@@ -512,7 +527,7 @@ namespace DeluxeGrabber
                         break;
                     }
 
-                    if ((grabber.heldObject.Value as Chest).items.Count >= 36) {
+                    if ((grabber.heldObject.Value as Chest).items.CountIgnoreNull() >= Chest.capacity) {
                         Monitor.Log("Global grabber full", LogLevel.Info);
                         return;
                     }
@@ -520,9 +535,9 @@ namespace DeluxeGrabber
                     if (feature is Bush bush) {
                         if (bush.inBloom(Game1.currentSeason, Game1.dayOfMonth) && bush.tileSheetOffset.Value == 1) {
                             
-                            Object berry = new Object(berryIndex, 1 + Game1.player.FarmingLevel / 4, false, -1, 0);
+                            SObject berry = new SObject(berryIndex, 1 + Game1.player.FarmingLevel / 4, false, -1, 0);
                             
-                            if (Game1.player.professions.Contains(16)) {
+                            if (Game1.player.professions.Contains(Farmer.botanist)) {
                                 berry.Quality = 4;
                             }
 
@@ -542,14 +557,14 @@ namespace DeluxeGrabber
                 // add items to grabber and remove from floor
                 foreach (Vector2 tile in grabbables) {
 
-                    if ((grabber.heldObject.Value as Chest).items.Count >= 36) {
+                    if ((grabber.heldObject.Value as Chest).items.CountIgnoreNull() >= Chest.capacity) {
                         Monitor.Log("Global grabber full", LogLevel.Info);
                         return;
                     }
 
-                    Object obj = location.Objects[tile];
+                    SObject obj = location.Objects[tile];
 
-                    if (Game1.player.professions.Contains(16)) {
+                    if (Game1.player.professions.Contains(Farmer.botanist)) {
                         obj.Quality = 4;
                     } else if (random.NextDouble() < Game1.player.ForagingLevel / 30.0) {
                         obj.Quality = 2;
@@ -557,7 +572,7 @@ namespace DeluxeGrabber
                         obj.Quality = 1;
                     }
 
-                    if (Game1.player.professions.Contains(13)) {
+                    if (Game1.player.professions.Contains(Farmer.gatherer)) {
                         while (random.NextDouble() < 0.2) {
                             obj.Stack += 1;
                         }
@@ -582,10 +597,10 @@ namespace DeluxeGrabber
                 {
                     if (location is FarmCave)
                     {
-                        foreach (Object obj in location.Objects.Values)
+                        foreach (SObject obj in location.Objects.Values)
                         {
 
-                            if ((grabber.heldObject.Value as Chest).items.Count >= 36)
+                            if ((grabber.heldObject.Value as Chest).items.CountIgnoreNull() >= Chest.capacity)
                             {
                                 Monitor.Log("Global grabber full", LogLevel.Info);
                                 return;
@@ -618,13 +633,13 @@ namespace DeluxeGrabber
                     Monitor.Log($"  {location} - found {pair.Value} {pair.Key}{plural}", LogLevel.Trace);
                 }
 
-                if ((grabber.heldObject.Value as Chest).items.Count > 0) {
+                if ((grabber.heldObject.Value as Chest).items.CountIgnoreNull() > 0) {
                     grabber.showNextIndex.Value = true;
                 }
             }
         }
 
-        private bool IsGrabbableCoop(Object obj) {
+        private bool IsGrabbableCoop(SObject obj) {
             if (obj.bigCraftable.Value) {
                 return obj.Name.Contains("Slime Ball");
             }
@@ -635,7 +650,7 @@ namespace DeluxeGrabber
             return false;
         }
 
-        private bool IsGrabbableWorld(Object obj) {
+        private bool IsGrabbableWorld(SObject obj) {
             if (obj.bigCraftable.Value) {
                 return false;
             }
